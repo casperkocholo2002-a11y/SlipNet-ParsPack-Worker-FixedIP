@@ -1,0 +1,8 @@
+name = "replace-me"
+main = "worker.js"
+compatibility_date = "2026-10-23"
+
+[vars]
+PUBLIC_PATH = "/replace-with-worker-path"
+FIXED_ORIGIN_HOST = "replace-with-new-independent-origin-domain"
+FIXED_ORIGIN_PATH = "/replace-with-independent-155-path"
