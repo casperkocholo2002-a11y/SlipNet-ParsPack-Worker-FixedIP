@@ -4,15 +4,27 @@ const http = require('http');
 const { WebSocket, WebSocketServer, createWebSocketStream } = require('ws');
 
 const PORT = Number(process.env.PORT || 3000);
-const PUBLIC_RELAY_PATH = String(process.env.PUBLIC_RELAY_PATH || '/pf/d9b9b6e3aee49cb4b71687404a911c20626846fc8ae14f01').trim();
-const WORKER_HOST = String(process.env.WORKER_HOST || 'ppf-0dcbc1a16ff9.edgecache-628bbe41dc.workers.dev').trim();
-const WORKER_PATH = String(process.env.WORKER_PATH || '/f/dcd6903ab84475e65a296be5aeb7a895ac62cb0ca9ec3b9e').trim();
+const PUBLIC_RELAY_PATH = String(
+  process.env.PUBLIC_RELAY_PATH ||
+  '/pf/d9b9b6e3aee49cb4b71687404a911c20626846fc8ae14f01'
+).trim();
+
+const ECH_RELAY_HOST = String(
+  process.env.ECH_RELAY_HOST ||
+  'app-rust-3juua.apps.teh11.abrhapaas.com'
+).trim();
+
+const ECH_RELAY_PATH = String(
+  process.env.ECH_RELAY_PATH ||
+  '/p/92943149c56048dda2b2123e591f9e7de9d79ae7d0d086db'
+).trim();
+
 const MAX_WS = 1024 * 1024;
 
 const ready = () => Boolean(
   PUBLIC_RELAY_PATH.startsWith('/') &&
-  WORKER_HOST &&
-  WORKER_PATH.startsWith('/')
+  ECH_RELAY_HOST &&
+  ECH_RELAY_PATH.startsWith('/')
 );
 
 const json = (res, status, value) => {
@@ -27,13 +39,16 @@ const json = (res, status, value) => {
 
 const server = http.createServer((req,res) => {
   const url = new URL(req.url,'http://slipnet.local');
+
   if (req.method === 'GET' && url.pathname === '/health') {
     return json(res, ready() ? 200 : 503, {
       ok: ready(),
-      service: 'slipnet-parspack-worker-fixedip',
-      mode: 'parspack-worker-fixed-egress',
+      service: 'slipnet-route3-ech-ingress',
+      mode: 'stable-ingress-to-ech-relay',
+      ech_required: true,
     });
   }
+
   return json(res,404,{ok:false,error:'not_found'});
 });
 
@@ -49,16 +64,22 @@ server.on('upgrade',(req,socket,head) => {
   try { url = new URL(req.url,'http://slipnet.local'); }
   catch { return socket.destroy(); }
 
-  if (!ready() || url.pathname !== PUBLIC_RELAY_PATH) return socket.destroy();
+  if (!ready() || url.pathname !== PUBLIC_RELAY_PATH) {
+    return socket.destroy();
+  }
 
-  const upstream = new WebSocket('wss://' + WORKER_HOST + WORKER_PATH, {
-    perMessageDeflate:false,
-    handshakeTimeout:15000,
-    maxPayload:MAX_WS,
-  });
+  const upstream = new WebSocket(
+    'wss://' + ECH_RELAY_HOST + ECH_RELAY_PATH,
+    {
+      perMessageDeflate:false,
+      handshakeTimeout:15000,
+      maxPayload:MAX_WS,
+    }
+  );
 
   let client,clientStream,upstreamStream;
   let closed=false;
+
   const closeAll=() => {
     if (closed) return;
     closed=true;
@@ -71,23 +92,42 @@ server.on('upgrade',(req,socket,head) => {
   upstream.once('open',() => {
     wss.handleUpgrade(req,socket,head,(ws) => {
       client=ws;
-      clientStream=createWebSocketStream(ws,{encoding:null,highWaterMark:1024*1024});
-      upstreamStream=createWebSocketStream(upstream,{encoding:null,highWaterMark:1024*1024});
+      clientStream=createWebSocketStream(ws,{
+        encoding:null,
+        highWaterMark:1024*1024,
+      });
+      upstreamStream=createWebSocketStream(upstream,{
+        encoding:null,
+        highWaterMark:1024*1024,
+      });
+
       clientStream.on('error',closeAll);
       upstreamStream.on('error',closeAll);
       clientStream.once('close',closeAll);
       upstreamStream.once('close',closeAll);
+
       clientStream.pipe(upstreamStream);
       upstreamStream.pipe(clientStream);
     });
   });
 
   upstream.once('error',() => {
-    try { socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); } catch {}
+    try {
+      socket.end(
+        'HTTP/1.1 502 Bad Gateway\r\n' +
+        'Connection: close\r\n' +
+        'Content-Length: 0\r\n\r\n'
+      );
+    } catch {}
     closeAll();
   });
+
   socket.once('error',closeAll);
-  socket.once('close',() => { if (!client) closeAll(); });
+  socket.once('close',() => {
+    if (!client) closeAll();
+  });
 });
 
-server.listen(PORT,'0.0.0.0',() => console.log('listening',PORT));
+server.listen(PORT,'0.0.0.0',() => {
+  console.log('listening',PORT);
+});
