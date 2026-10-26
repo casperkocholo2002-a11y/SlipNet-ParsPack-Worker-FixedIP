@@ -1,5 +1,16 @@
 'use strict';
 
+const MIN_SAFE_NODE = [22, 23, 4];
+const CURRENT_NODE = process.versions.node.split('.').map(Number);
+const nodeSafe =
+  CURRENT_NODE[0] === 22 &&
+  (CURRENT_NODE[1] > MIN_SAFE_NODE[1] ||
+   (CURRENT_NODE[1] === MIN_SAFE_NODE[1] && CURRENT_NODE[2] >= MIN_SAFE_NODE[2]));
+if (!nodeSafe) {
+  console.error('Unsafe or unsupported Node.js runtime: ' + process.versions.node);
+  process.exit(1);
+}
+
 const http = require('http');
 const { WebSocket, WebSocketServer, createWebSocketStream } = require('ws');
 
@@ -44,6 +55,7 @@ const server = http.createServer((req,res) => {
     return json(res, ready() ? 200 : 503, {
       ok: ready(),
       service: 'slipnet-route3-ech-ingress',
+      node: process.versions.node,
       mode: 'stable-ingress-to-ech-relay',
       ech_required: true,
     });
